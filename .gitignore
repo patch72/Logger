@@ -9,3 +9,4 @@ releases/*
 temp/*
 #For IMDone Atom.io plugin
 .imdone/*
+Sandbox/test1.tst
