@@ -77,6 +77,10 @@ as
   -- #127
   -- Note to developers: This is only for internal Logger code. Do not use this as part of your code.
   g_pref_type_logger constant logger_prefs.pref_type%type := 'LOGGER'; -- If this changes need to modify logger_prefs.sql as it has a dependancy.
+  g_pref_type_logger_aa constant logger_prefs.pref_type%type := 'LOGGER_AA'; -- PBA 20200316
+  g_default_logger_aa_size constant varchar2(100) := '100'; -- PBA 20200316
+  g_default_logger_aa_prefix constant varchar2(100) := ''; -- PBA 20200316
+  g_default_logger_aa_suffix constant varchar2(100) := ''; -- PBA 20200316
 
   -- Expose private functions only for testing during development
   $if $$logger_debug $then
@@ -130,6 +134,18 @@ as
   $end
 
   -- PROCEDURES and FUNCTIONS
+
+ procedure set_AA_size(
+    p_size_in in varchar2 default logger.g_default_logger_aa_size
+  );
+
+  procedure set_AA_prefix(
+    p_prefix in varchar2 default logger.g_default_logger_aa_prefix
+  );
+
+  procedure set_AA_suffix(
+    p_suffix in varchar2 default logger.g_default_logger_aa_size
+  );
 
   procedure null_global_contexts;
 

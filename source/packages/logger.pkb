@@ -32,13 +32,31 @@ as
 
   -- TYPES
   type ts_array is table of timestamp index by varchar2(100);
-
+  type log_rec is record(
+    id                logger_logs.id%type
+  , logger_level      logger_logs.logger_level%type
+  , text              varchar2(32767) default null -- Not using type since want to be able to pass in 32767 characters
+  , time_stamp        logger_logs.time_stamp%type default systimestamp
+  , scope             logger_logs.scope%type default null
+  , module            logger_logs.module%type default null
+  , action            logger_logs.action%type default null
+  , user_name         logger_logs.user_name%type default null
+  , client_identifier logger_logs.client_identifier%type default null
+  , call_stack        logger_logs.call_stack%type default null
+  , unit_name         logger_logs.unit_name%type default null
+  , line_no           logger_logs.line_no%type default null
+  , scn               logger_logs.scn%type default null
+  , extra             logger_logs.extra%type default null
+  , sid               logger_logs.sid%type default null
+  , client_info       logger_logs.client_info%type default null
+  );
+  type log_aat is table of log_rec index by pls_integer;
 
   -- VARIABLES
   g_log_id number;
   g_proc_start_times ts_array;
   g_running_timers pls_integer := 0;
-
+  g_internal_log log_aat;
   -- #46
   g_plug_logger_log_error rec_logger_log;
 
@@ -55,7 +73,7 @@ as
   gc_date_format constant varchar2(255) := 'DD-MON-YYYY HH24:MI:SS';
   gc_timestamp_format constant varchar2(255) := gc_date_format || ':FF';
   gc_timestamp_tz_format constant varchar2(255) := gc_timestamp_format || ' TZR';
-
+    
   gc_ctx_attr_level constant varchar2(5) := 'level';
   gc_ctx_attr_include_call_stack constant varchar2(18) := 'include_call_stack';
   gc_ctx_attr_scope constant varchar2(5) := 'scope';
@@ -78,7 +96,9 @@ as
   gc_pref_client_id_expire_hours constant logger_prefs.pref_name%type := 'PREF_BY_CLIENT_ID_EXPIRE_HOURS';
   gc_pref_logger_debug constant logger_prefs.pref_name%type := 'LOGGER_DEBUG';
   gc_pref_plugin_fn_error constant logger_prefs.pref_name%type := 'PLUGIN_FN_ERROR';
-
+  gc_pref_logger_aa_size constant logger_prefs.pref_name%type := 'LOGGER_AA_SIZE'; -- PBA 20200316
+  gc_pref_logger_aa_prefix constant logger_prefs.pref_name%type := 'LOGGER_AA_PREFIX'; -- PBA 20200316
+  gc_pref_logger_aa_suffix constant logger_prefs.pref_name%type := 'LOGGER_AA_SUFFIX'; -- PBA 20200316
 
 
 
@@ -436,6 +456,124 @@ as
    * Notes:
    *  - Private
    *
+   * @author Patrick Barel
+   * @created 20200316
+   * @return The number of messages to save in the Associative Array
+   */
+  function get_logger_aa_size
+    return number
+    $if $$rac_lt_11_2 $then
+      $if not dbms_db_version.ver_le_10_2 $then
+        result_cache relies_on (logger_prefs)
+      $end
+    $end
+  is
+    l_size number;
+
+    $if $$logger_debug $then
+      l_scope varchar2(30) := 'get_logger_aa_size';
+    $end
+
+  begin
+    $if $$no_op $then
+      return gc_default_aa_size;
+    $else
+      $if $$logger_debug $then
+        dbms_output.put_line(l_scope || ': selecting logger AA Size');
+      $end
+
+      l_size := nvl(logger.get_pref(p_pref_name => logger.gc_pref_logger_aa_size
+      ,p_pref_type => logger.g_pref_type_logger_aa),logger.g_default_logger_aa_size);
+
+      return greatest(l_size, 0);
+    $end
+  end get_logger_aa_size;
+
+
+  /**
+   *
+   *
+   * Notes:
+   *  - Private
+   *
+   * @author Patrick Barel
+   * @created 20200316
+   * @return The suffix which get added to the scope column
+   */
+  function get_logger_aa_prefix
+    return varchar2
+    $if $$rac_lt_11_2 $then
+      $if not dbms_db_version.ver_le_10_2 $then
+        result_cache relies_on (logger_prefs)
+      $end
+    $end
+  is
+    l_prefix varchar2(100);
+
+    $if $$logger_debug $then
+      l_scope varchar2(30) := 'get_logger_aa_prefix';
+    $end
+
+  begin
+    $if $$no_op $then
+      return gc_default_aa_prefix;
+    $else
+      $if $$logger_debug $then
+        dbms_output.put_line(l_scope || ': selecting logger AA Prefix');
+      $end
+
+      l_prefix := nvl(logger.get_pref(p_pref_name => logger.gc_pref_logger_aa_prefix
+      ,p_pref_type => logger.g_pref_type_logger_aa),logger.g_default_logger_aa_prefix);
+
+      return l_prefix;
+    $end
+  end get_logger_aa_prefix;
+
+
+  /**
+   *
+   *
+   * Notes:
+   *  - Private
+   *
+   * @author Patrick Barel
+   * @created 20200316
+   * @return The suffix which get added to the scope column
+   */
+  function get_logger_aa_suffix
+    return varchar2
+    $if $$rac_lt_11_2 $then
+      $if not dbms_db_version.ver_le_10_2 $then
+        result_cache relies_on (logger_prefs)
+      $end
+    $end
+  is
+    l_suffix varchar2(100);
+
+    $if $$logger_debug $then
+      l_scope varchar2(30) := 'get_logger_aa_suffix';
+    $end
+
+  begin
+    $if $$no_op $then
+      return gc_default_aa_suffix;
+    $else
+      $if $$logger_debug $then
+        dbms_output.put_line(l_scope || ': selecting logger AA Suffix');
+      $end
+
+      l_suffix := nvl(logger.get_pref(p_pref_name => logger.gc_pref_logger_aa_suffix
+      ,p_pref_type => logger.g_pref_type_logger_aa),logger.g_default_logger_aa_suffix);
+
+      return l_suffix;
+    $end
+  end get_logger_aa_suffix;
+  /**
+   *
+   *
+   * Notes:
+   *  - Private
+   *
    * Related Tickets:
    *  - #111 Use get_pref to remove duplicate code
    *
@@ -606,6 +744,193 @@ as
       o_unit := trim(substr( l_callstack, instr( l_callstack, ' ', -1, 1 ) ));
     $end
   end get_debug_info;
+
+
+  /**
+   * Procedure to dump the info of the AA into the table
+   *
+   *
+   * @author Patrick Barel
+   * @created 2020-03-15
+   *
+   */
+  procedure aa_dump_log is
+    pragma autonomous_transaction;
+
+--    l_id logger_logs.id%type;
+--    l_text varchar2(32767); -- := p_text;
+--    l_extra logger_logs.extra%type; -- := p_extra;
+--    l_tmp_clob clob;
+  begin
+    $if $$no_op $then
+      null;
+    $else
+      -- PBA 20200322 Check if the AA has at least one (1) item
+      if g_internal_log.count >= 1 then
+        -- PBA 20200316 update the scope with the prefix and the suffix
+        for indx in g_internal_log.first .. g_internal_log.last loop
+          g_internal_log(indx).scope := trim(both ' ' from get_logger_aa_prefix || g_internal_log(indx).scope || get_logger_aa_suffix);
+        end loop;
+        --
+        forall indx in g_internal_log.first .. g_internal_log.last
+        insert into logger_logs(
+          id, logger_level, text,
+          time_stamp, scope, module,
+          action,
+          user_name,
+          client_identifier,
+          call_stack, unit_name, line_no ,
+          scn,
+          extra,
+          sid,
+          client_info
+          )
+         values(
+           logger_logs_seq.nextval, g_internal_log(indx).logger_level, g_internal_log(indx).text,
+           g_internal_log(indx).time_stamp, lower(g_internal_log(indx).scope), sys_context('userenv','module'),
+           sys_context('userenv','action'),
+           nvl($if $$apex $then apex_application.g_user $else user $end,user),
+           sys_context('userenv','client_identifier'),
+           g_internal_log(indx).call_stack, upper(g_internal_log(indx).unit_name), g_internal_log(indx).line_no,
+           null,
+           g_internal_log(indx).extra,
+           to_number(sys_context('userenv','sid')),
+           sys_context('userenv','client_info')
+           );
+          -- as soon as everything got dumped, clean out the AA
+          g_internal_log.delete;
+        end if;
+    $end -- $$NO_OP
+
+    commit;
+  end aa_dump_log;
+  /**
+   * Procedure that will store log data into the AA. It will also check that there will not be more than
+   * the designated number of items.
+   *
+   *
+   * @author Patrick Barel
+   * @created 2020-03-15
+   * @param p_unit_name
+   * @param p_scope
+   * @param p_log_level
+   * @param p_extra
+   * @param p_text
+   * @param p_callstack
+   * @param p_line_no
+   *
+   */
+  procedure aa_add_log(p_unit_name    in logger_logs.unit_name%type default null
+                      ,p_scope        in logger_logs.scope%type default null
+                      ,p_logger_level in logger_logs.logger_level%type
+                      ,p_extra        in logger_logs.extra%type default null
+                      ,p_text         in varchar2 default null -- Not using type since want to be able to pass in 32767 characters
+                      ,p_call_stack   in logger_logs.call_stack%type default null
+                      ,p_line_no      in logger_logs.line_no%type default null) is
+    l_text varchar2(32767) := p_text;
+    l_extra logger_logs.extra%type := p_extra;
+    l_tmp_clob clob;
+    l_aa_size integer;
+  begin
+    -- fetch the current AA size into a variable because we need it more than once
+    l_aa_size := get_logger_aa_size;
+    if l_aa_size > 0 then
+      $if $$large_text_column $then -- Only check for moving to Clob if small text column
+        -- Don't do anything since column supports large text
+      $else
+        if lengthb(l_text) > 4000 then -- #109 Using lengthb for multibyte characters
+          if l_extra is null then
+            l_extra := l_text;
+          else
+            -- Using temp clob for performance purposes: http://www.talkapex.com/2009/06/how-to-quickly-append-varchar2-to-clob.html
+            l_tmp_clob := gc_line_feed || gc_line_feed || '*** Content moved from TEXT column ***' || gc_line_feed;
+            l_extra := l_extra || l_tmp_clob;
+            l_tmp_clob := l_text;
+            -- PBA 20200315 I think the temp clob should be copied instead of the orginal text
+--            l_extra := l_extra || l_text;
+            l_extra := l_extra || l_tmp_clob;
+          end if; -- l_extra is not null
+
+          l_text := 'Text moved to EXTRA column';
+        end if; -- length(l_text)
+      $end
+
+      -- add a record to the AA
+      g_internal_log(nvl(g_internal_log.last,0) + 1).unit_name := p_unit_name;
+      g_internal_log(g_internal_log.last).scope         := p_scope;
+      g_internal_log(g_internal_log.last).logger_level  := p_logger_level;
+      g_internal_log(g_internal_log.last).extra         := l_extra;
+      g_internal_log(g_internal_log.last).text          := l_text;
+      g_internal_log(g_internal_log.last).call_stack    := p_call_stack;
+      g_internal_log(g_internal_log.last).line_no       := p_line_no;
+      g_internal_log(g_internal_log.last).time_stamp    := systimestamp;
+      -- check if we have more than the AA size records
+      if g_internal_log.count > l_aa_size then
+        -- then delete the first one
+        g_internal_log.delete(g_internal_log.first);
+      end if;
+    end if;
+  end aa_add_log;
+--
+  /**
+   * Main procedure that will store log data into an AA, for later use
+   *
+   *
+   * @author Patrick Barel
+   * @created 20200315
+   * @param p_text
+   * @param p_log_level
+   * @param p_scope
+   * @param p_extra
+   * @param p_callstack
+   * @param p_params
+   *
+   */
+  procedure aa_log(
+    p_text in varchar2,
+    p_log_level in number,
+    p_scope in varchar2,
+    p_extra in clob default null,
+    p_callstack in varchar2 default null,
+    p_params in tab_param default logger.gc_empty_tab_param)
+  is
+    l_proc_name varchar2(100);
+    l_lineno varchar2(100);
+    l_text varchar2(32767);
+    l_callstack varchar2(3000);
+    l_extra logger_logs.extra%type;
+  begin
+    $if $$no_op $then
+      null;
+    $else
+      l_text := p_text;
+
+      -- Generate callstack text
+      if p_callstack is not null and logger.include_call_stack then
+        logger.get_debug_info(
+          p_callstack => p_callstack,
+          o_unit => l_proc_name,
+          o_lineno => l_lineno);
+
+        l_callstack  := regexp_replace(p_callstack,'^.*$','',1,4,'m');
+        l_callstack  := regexp_replace(l_callstack,'^.*$','',1,1,'m');
+        l_callstack  := ltrim(replace(l_callstack,chr(10)||chr(10),chr(10)),chr(10));
+
+      end if;
+
+      l_extra := set_extra_with_params(p_extra => p_extra, p_params => p_params);
+
+      -- save all the info into the AA
+      aa_add_log(
+        p_unit_name => upper(l_proc_name) ,
+        p_scope => p_scope ,
+        p_logger_level =>p_log_level,
+        p_extra => l_extra,
+        p_text =>l_text,
+        p_call_stack  =>l_callstack,
+        p_line_no => l_lineno);
+    $end
+  end aa_log;
 
 
   /**
@@ -805,6 +1130,110 @@ as
 
   -- **** PUBLIC ****
 
+  /**
+   * Sets the AA Size
+   *
+   * Notes:
+   *  -
+   *
+   * @author Patrick Barel
+   * @created 2020-03-22
+   *
+   * @param p_size_in Valid values: Numeric, 0 or greater
+   */
+  procedure set_AA_size(
+    p_size_in in varchar2 default logger.g_default_logger_aa_size
+  )
+  is
+    pragma autonomous_transaction;
+  begin
+    $if $$no_op $then
+      raise_application_error (-20000,
+          'Either the NO-OP version of Logger is installed or it is compiled for NO-OP,  so you cannot set the level.');
+    $else
+      assert(is_number(p_size_in), 'Size must be numeric');
+      assert(to_number(p_size_in) >= 0, 'Size must be greater than or equal to 0');
+
+      -- Global settings
+      update logger_prefs
+         set pref_value = p_size_in
+       where 1=1
+         and pref_type = logger.g_pref_type_logger_aa
+            and pref_name = gc_pref_logger_aa_size;
+
+    $end
+    commit;
+  end set_AA_size;
+
+  /**
+   * Sets the AA Size
+   *
+   * Notes:
+   *  -
+   *
+   * @author Patrick Barel
+   * @created 2020-03-22
+   *
+   * @param p_size_in Valid values: Numeric, 0 or greater
+   */
+  procedure set_AA_prefix(
+    p_prefix in varchar2 default logger.g_default_logger_aa_prefix
+  )
+  is
+    pragma autonomous_transaction;
+  begin
+    $if $$no_op $then
+      raise_application_error (-20000,
+          'Either the NO-OP version of Logger is installed or it is compiled for NO-OP,  so you cannot set the level.');
+    $else
+--      assert(is_number(p_size_in), 'Size must be numeric');
+--      assert(to_number(p_size_in) >= 0, 'Size must be greater than or equal to 0');
+
+      -- Global settings
+      update logger_prefs
+         set pref_value = p_prefix
+       where 1=1
+         and pref_type = logger.g_pref_type_logger_aa
+            and pref_name = gc_pref_logger_aa_prefix;
+
+    $end
+    commit;
+  end set_AA_prefix;
+
+  /**
+   * Sets the AA Size
+   *
+   * Notes:
+   *  -
+   *
+   * @author Patrick Barel
+   * @created 2020-03-22
+   *
+   * @param p_size_in Valid values: Numeric, 0 or greater
+   */
+  procedure set_AA_suffix(
+    p_suffix in varchar2 default logger.g_default_logger_aa_size
+  )
+  is
+    pragma autonomous_transaction;
+  begin
+    $if $$no_op $then
+      raise_application_error (-20000,
+          'Either the NO-OP version of Logger is installed or it is compiled for NO-OP,  so you cannot set the level.');
+    $else
+--      assert(is_number(p_size_in), 'Size must be numeric');
+--      assert(to_number(p_size_in) >= 0, 'Size must be greater than or equal to 0');
+
+      -- Global settings
+      update logger_prefs
+         set pref_value = p_suffix
+       where 1=1
+         and pref_type = logger.g_pref_type_logger_aa
+            and pref_name = gc_pref_logger_aa_suffix;
+
+    $end
+    commit;
+  end set_AA_suffix;
 
   /**
    * Sets all the contexts to null
@@ -1240,6 +1669,8 @@ as
             run_plugin(p_logger_log => g_plug_logger_log_error);
           end if; -- not g_in_plugin_error
         $end
+        -- PBA 20200315: When we log an error, also dump the AA
+        aa_dump_log;
 
       end if; -- ok_to_log
     $end
@@ -1283,6 +1714,14 @@ as
           p_params => p_params
         );
       end if;
+      -- PBA 20200315 Always log in the AA internally
+      aa_log(
+          p_text => p_text,
+          p_log_level => logger.g_debug,
+          p_scope => p_scope,
+          p_extra => p_extra,
+          p_callstack => dbms_utility.format_call_stack,
+          p_params => p_params);
     $end
   end log_permanent;
 
@@ -1322,6 +1761,15 @@ as
           p_extra => p_extra,
           p_callstack => dbms_utility.format_call_stack,
           p_params => p_params);
+      else
+        -- PBA 20200315 If we don't log in the table, we always log in the AA internally
+        aa_log(
+            p_text => p_text,
+            p_log_level => logger.g_warning,
+            p_scope => p_scope,
+            p_extra => p_extra,
+            p_callstack => dbms_utility.format_call_stack,
+            p_params => p_params);
       end if;
     $end
   end log_warning;
@@ -1393,6 +1841,15 @@ as
           p_extra => p_extra,
           p_callstack => dbms_utility.format_call_stack,
           p_params => p_params);
+      else
+        -- PBA 20200315 If we don't log in the table, we always log in the AA internally
+        aa_log(
+            p_text => p_text,
+            p_log_level => logger.g_information,
+            p_scope => p_scope,
+            p_extra => p_extra,
+            p_callstack => dbms_utility.format_call_stack,
+            p_params => p_params);
       end if;
     $end
   end log_information;
@@ -1466,6 +1923,15 @@ as
           p_extra => p_extra,
           p_callstack => dbms_utility.format_call_stack,
           p_params => p_params);
+      else
+        -- PBA 20200315 If we don't log in the table, we always log in the AA internally
+        aa_log(
+            p_text => p_text,
+            p_log_level => logger.g_debug,
+            p_scope => p_scope,
+            p_extra => p_extra,
+            p_callstack => dbms_utility.format_call_stack,
+            p_params => p_params);
       end if;
     $end
   end log;
